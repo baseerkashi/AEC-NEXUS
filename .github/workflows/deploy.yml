@@ -1,0 +1,76 @@
+name: Deploy Worker
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Required GitHub secrets:
+#   CLOUDFLARE_API_TOKEN  — Workers Scripts:Edit + Account Settings:Read
+#   CLOUDFLARE_ACCOUNT_ID — Cloudflare account id
+#
+# Worker script (worker/index.ts) serves the Vite build in ./dist and the
+# /api/visits counter backed by a SQLite Durable Object, which is created
+# automatically on deploy — no KV namespace or extra permissions required.
+# Requires Wrangler 4+ (v3 demands a JS entry-point / main field).
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        env:
+          npm_config_registry: https://registry.npmjs.org/
+        run: npm ci --legacy-peer-deps
+
+      - name: Build project
+        run: npm run build
+
+      - name: Check Cloudflare secrets
+        shell: bash
+        run: |
+          missing=0
+          if [ -z "${{ secrets.CLOUDFLARE_API_TOKEN }}" ]; then
+            echo "::error::Missing secret CLOUDFLARE_API_TOKEN"
+            missing=1
+          fi
+          if [ -z "${{ secrets.CLOUDFLARE_ACCOUNT_ID }}" ]; then
+            echo "::error::Missing secret CLOUDFLARE_ACCOUNT_ID"
+            missing=1
+          fi
+          if [ "$missing" -ne 0 ]; then
+            echo "Add both secrets under Repo → Settings → Secrets and variables → Actions"
+            exit 1
+          fi
+          echo "Cloudflare secrets are present."
+
+      - name: Deploy Worker
+        id: deploy
+        uses: cloudflare/wrangler-action@v4
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          # Worker + assets config (wrangler.jsonc) needs Wrangler 4+
+          wranglerVersion: "4.153.0"
+          command: deploy
+
+      - name: Deploy failure help
+        if: failure() && steps.deploy.conclusion == 'failure'
+        shell: bash
+        run: |
+          echo "::error::Cloudflare deploy step failed."
+          echo "If the log says 'No access to the specified service':"
+          echo "  - Token needs Account → Workers Scripts → Edit"
+          echo "  - CLOUDFLARE_ACCOUNT_ID must match the Worker account"
+          echo "If the log says 'Missing entry-point':"
+          echo "  - Ensure wranglerVersion is 4.x (assets-only config)"

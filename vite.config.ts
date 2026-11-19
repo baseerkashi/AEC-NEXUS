@@ -1,0 +1,179 @@
+import { defineConfig } from "vite";
+
+import react from "@vitejs/plugin-react";
+import { readdirSync, readFileSync, statSync, writeFileSync, existsSync } from "node:fs";
+import { join, relative, sep } from "node:path";
+import { createHash } from "node:crypto";
+/**
+ * Vite config for Open BIM Studio.
+ *
+ * Proxies exist because some AI providers do not send permissive CORS
+ * headers for browser requests:
+ *   /ollama     → http://localhost:11434   (Ollama)
+ *   /lmstudio   → http://localhost:1234    (LM Studio; CORS off by default)
+ *   /anthropic  → https://api.anthropic.com (Anthropic; no CORS headers)
+ *
+ * Providers that DO send CORS headers (OpenAI, Groq, Gemini, DeepSeek,
+ * Mistral, Together, OpenRouter, Fireworks, Perplexity, xAI) are called
+ * directly — no proxy needed.
+ */
+export default defineConfig({
+  plugins: [react(), crossOriginIsolation(), pwaPrecache()],
+  esbuild: { target: "esnext" },
+  // web-ifc WASM is served from a versioned folder (/web-ifc/<version>/) so a
+  // new build can never be paired with stale cached WASM bytes (PWA precache,
+  // browser HTTP cache, edge cache) — the source of web-ifc BindingErrors
+  // like "StreamMeshes called with 4 arguments, expected 3".
+  define: {
+    __WEB_IFC_VERSION__: JSON.stringify((() => {
+      try {
+        return JSON.parse(readFileSync(join(process.cwd(), "node_modules", "web-ifc", "package.json"), "utf8")).version;
+      } catch { return ""; }
+    })()),
+  },
+  build: {
+    target: "esnext",
+    // Large vendors (web-ifc WASM, @thatopen/components, monaco) inherently
+    // exceed 1.5 MB; raise the limit so CI build logs stay clean.
+    chunkSizeWarningLimit: 4000,
+    rollupOptions: {
+      output: {
+        // Vite 8 / rolldown requires a function (object form throws TypeError).
+        manualChunks(id: string) {
+          if (!id.includes("node_modules")) return;
+          if (/node_modules\/(?:react|react-dom|react-redux|@reduxjs)\//.test(id)) return "react-vendor";
+          if (/node_modules\/(?:@mui|@emotion)\//.test(id)) return "mui-vendor";
+          if (/node_modules\/(?:three|three-mesh-bvh|three-csg-ts)\//.test(id)) return "three-vendor";
+          if (/node_modules\/@thatopen\//.test(id)) return "thatopen-vendor";
+          if (/node_modules\/@tldraw\//.test(id)) return "tldraw-vendor";
+          if (/node_modules\/monaco-editor\//.test(id)) return "monaco-vendor";
+          if (/node_modules\/web-ifc\//.test(id)) return "ifc-vendor";
+          if (/node_modules\/(?:yjs|y-websocket)\//.test(id)) return "yjs-vendor";
+        },
+      },
+    },
+  },
+  resolve: { dedupe: ["lit", "lit-html", "lit-element", "@lit/reactive-element"] },
+  worker: {
+    format: "es",
+  },
+  server: {
+    port: 3000,
+    proxy: {
+      "/ollama": {
+        target: "http://localhost:11434",
+        changeOrigin: true,
+        secure: false,
+        rewrite: (path) => path.replace(/^\/ollama/, ""),
+      },
+      "/lmstudio": {
+        target: "http://localhost:1234",
+        changeOrigin: true,
+        secure: false,
+        rewrite: (path) => path.replace(/^\/lmstudio/, ""),
+      },
+      "/anthropic": {
+        target: "https://api.anthropic.com",
+        changeOrigin: true,
+        secure: true,
+        rewrite: (path) => path.replace(/^\/anthropic/, ""),
+      },
+    },
+  },
+  preview: {
+    port: 3000,
+    proxy: {
+      "/ollama": {
+        target: "http://localhost:11434",
+        changeOrigin: true,
+        secure: false,
+        rewrite: (path) => path.replace(/^\/ollama/, ""),
+      },
+      "/lmstudio": {
+        target: "http://localhost:1234",
+        changeOrigin: true,
+        secure: false,
+        rewrite: (path) => path.replace(/^\/lmstudio/, ""),
+      },
+      "/anthropic": {
+        target: "https://api.anthropic.com",
+        changeOrigin: true,
+        secure: true,
+        rewrite: (path) => path.replace(/^\/anthropic/, ""),
+      },
+    },
+  },
+});
+// --- OpenBIMStudio :: COOP/COEP for SharedArrayBuffer (web-ifc-mt) ---
+// CSP for the DWG reader worker document ONLY. The LibreDWG wasm registers its
+// whole API through emscripten embind, which generates invoker functions with
+// `new Function` during wasm startup - JavaScript evaluation the main document
+// CSP deliberately forbids. The parser therefore runs in an isolated module
+// worker; this scoped policy is the ONLY place 'unsafe-eval' is allowed, and
+// the worker has no DOM or BIM state (bytes in -> geometry JSON out).
+const DWG_READER_WORKER_CSP =
+  "default-src 'none'; script-src 'self' 'wasm-unsafe-eval' 'unsafe-eval'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'";
+const DWG_READER_WORKER_URL = /dwg-reader-worker/;
+
+function crossOriginIsolation() {
+  return {
+    name: "cross-origin-isolation",
+    configureServer(server) {
+      server.middlewares.use((req, res, next) => {
+        res.setHeader("Cross-Origin-Opener-Policy", "same-origin");
+        res.setHeader("Cross-Origin-Embedder-Policy", "require-corp");
+        res.setHeader("Cross-Origin-Resource-Policy", "same-origin");
+        applySecurityHeaders(res, req.url && DWG_READER_WORKER_URL.test(req.url) ? DWG_READER_WORKER_CSP : undefined);
+        next();
+      });
+    },
+    configurePreviewServer(server) {
+      server.middlewares.use((req, res, next) => {
+        res.setHeader("Cross-Origin-Opener-Policy", "same-origin");
+        res.setHeader("Cross-Origin-Embedder-Policy", "require-corp");
+        res.setHeader("Cross-Origin-Resource-Policy", "same-origin");
+        applySecurityHeaders(res, req.url && DWG_READER_WORKER_URL.test(req.url) ? DWG_READER_WORKER_CSP : undefined);
+        next();
+      });
+    },
+  };
+}
+// --- OpenBIMStudio :: PWA — list every built file in the service worker so the app runs offline ---
+function pwaPrecache() {
+  let outDir = "dist";
+  return {
+    name: "obs-pwa-precache",
+    apply: "build" as const,
+    configResolved(cfg: { build: { outDir: string }; root: string }) { outDir = join(cfg.root, cfg.build.outDir); },
+    closeBundle() {
+      const swPath = join(outDir, "sw.js");
+      if (!existsSync(swPath)) return;
+      const files: string[] = [];
+      const walk = (dir: string) => {
+        for (const name of readdirSync(dir)) {
+          const full = join(dir, name);
+          if (statSync(full).isDirectory()) walk(full);
+          else files.push("/" + relative(outDir, full).split(sep).join("/"));
+        }
+      };
+      walk(outDir);
+      const list = files.filter((f) => f !== "/sw.js" && !f.endsWith(".map") && !f.endsWith(".html"));
+      const hash = createHash("sha1").update(list.join("|")).update(String(Date.now())).digest("hex").slice(0, 10);
+      const src = readFileSync(swPath, "utf8")
+        .replace("__OBS_BUILD__", hash)
+        .replace("/*__OBS_PRECACHE__*/ []", JSON.stringify(list));
+      writeFileSync(swPath, src);
+    },
+  };
+}
+
+/** Hardening headers shared by the dev and preview servers (the hosted build sets the same ones in vercel.json). */
+function applySecurityHeaders(res: { setHeader(k: string, v: string): void }, cspOverride?: string) {
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("Referrer-Policy", "no-referrer");
+  res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=(), usb=(), interest-cohort=()");
+  res.setHeader(
+    "Content-Security-Policy",
+    cspOverride ?? "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src 'self' data: blob:; media-src 'self' blob:; font-src 'self' data: https://fonts.gstatic.com; connect-src 'self' blob: https://developer.api.autodesk.com https://graph.microsoft.com https://*.sharepoint.com https://field.dalux.com https://www.googleapis.com https://generativelanguage.googleapis.com https://api.openai.com https://api.anthropic.com https://api.groq.com https://openrouter.ai https://api.cerebras.ai https://api.deepseek.com https://api.mistral.ai https://api.together.xyz https://api.dropboxapi.com https://content.dropboxapi.com http://localhost:* http://127.0.0.1:* ws://localhost:* wss://localhost:* ws://127.0.0.1:* wss://127.0.0.1:*; frame-src 'none'; frame-ancestors 'none'; object-src 'none'; base-uri 'self'; form-action 'self'",
+  );
+}

@@ -1,0 +1,11 @@
+const { execSync } = require("child_process");
+const fs = require("fs"), os = require("os"), path = require("path"), assert = require("assert");
+const out = fs.mkdtempSync(path.join(os.tmpdir(), "sbx-"));
+execSync(`npx tsc src/features/section-box-math.ts --outDir ${out} --module commonjs --target es2020 --skipLibCheck --ignoreDeprecations 5.0`, { stdio: "inherit" });
+const m = require(path.join(out, "section-box-math.js"));
+let pass = 0, fail = 0;
+const t = (n, f) => { try { f(); pass++; console.log("  PASS " + n); } catch (e) { fail++; console.log("  FAIL " + n + ": " + e.message); } };
+const near = (a, b) => assert.ok(Math.abs(a - b) < 1e-9, `${a} != ${b}`);
+t("module loads", () => { assert.ok(m); });
+console.log(`=== Result: ${pass} passed, ${fail} failed ===`);
+process.exit(fail ? 1 : 0);
