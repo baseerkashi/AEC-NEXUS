@@ -80,7 +80,7 @@ rvtBackdrop.innerHTML = `<section id="nx-rvt-dialog" role="dialog" aria-modal="t
   <p>In Revit, choose File -&gt; Export -&gt; IFC. Drop the IFC file here for immediate clash and cost analysis.</p>
   <h3>Planned plugin workflow</h3>
   <p>The planned AEC Nexus Revit Add-in or Autodesk APS connector will send model geometry and element metadata to this workspace in one click.</p>
-  <button id="nx-rvt-demo" class="primary">Load Demo Models</button>
+  <button id="nx-rvt-demo" class="primary">Run Live Demo</button>
 </section>`;
 document.body.appendChild(rvtBackdrop);
 const controls = document.createElement("nav");
