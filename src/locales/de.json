@@ -1,7 +1,7 @@
 {
   "meta": { "name": "German", "nativeName": "Deutsch", "dir": "ltr" },
   "app": {
-    "name": "Open BIM Studio",
+    "name": "AEC Nexus",
     "loading": "Wird geladen…",
     "ready": "Bereit",
     "cancel": "Abbrechen",

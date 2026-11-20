@@ -1,7 +1,7 @@
 {
   "standards": { "title": "Standards" }, "meta": { "name": "English", "nativeName": "English", "dir": "ltr" },
   "app": {
-    "name": "Open BIM Studio",
+    "name": "AEC Nexus",
     "loading": "Loading…",
     "ready": "Ready",
     "cancel": "Cancel",

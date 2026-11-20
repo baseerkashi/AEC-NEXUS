@@ -1,8 +1,8 @@
 {
   "id": "/",
-  "name": "Open BIM Studio",
-  "short_name": "OpenBIM",
-  "description": "Local-first openBIM authoring, federation, coordination and documentation.",
+  "name": "AEC Nexus",
+  "short_name": "AEC Nexus",
+  "description": "Browser-based multi-discipline BIM clash detection and pre-construction financial triage.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
