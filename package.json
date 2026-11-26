@@ -165,7 +165,7 @@
     "@thatopen/ui": "^3.4.14",
     "@thatopen/ui-obc": "^3.4.3",
     "@tldraw/editor": "^5.6.0",
-    "axios": "^1.21.0",
+    "axios": "^1.21.1",
     "camera-controls": "^3.1.2",
     "file-saver": "^2.0.5",
     "jszip": "^3.10.2",
