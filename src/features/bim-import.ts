@@ -21,8 +21,8 @@ import { tryNwcLocalBridge, probeNwcBridge, isNwcLocalFile, NWC_LOCAL_EXTS, setB
 
 type Any = Record<string, any>;
 
-/** Default server URL (can be overridden). */
-let serverUrl = "http://localhost:4000";
+/** Default server URL (empty = same-origin /api; can be overridden via VITE_API_BASE_URL or setConvertServer). */
+let serverUrl = String((import.meta as any).env?.VITE_API_BASE_URL || "").replace(/\/$/, "");
 
 /** Set the conversion server URL. */
 export function setConvertServer(url: string): void {

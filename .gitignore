@@ -61,5 +61,8 @@ public/libredwg/
 .wrangler/
 interop-report.json
 
+# Vercel local CLI state
+.vercel/
+
 # Generated versioned web-ifc assets (scripts/sync-web-ifc-assets.mjs)
 public/web-ifc/0.*/

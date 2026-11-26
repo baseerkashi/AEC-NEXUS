@@ -1,5 +1,6 @@
 import http from "node:http";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseAllowedOrigins, originAllowed, corsHeaders, SECURITY_HEADERS, validId, tokenOk, safeUploadName } from "./security.mjs";
@@ -25,7 +26,10 @@ if (!CFG.ok) {
   process.exit(1);
 }
 
-const dataDir = process.env.OBS_DATA_DIR || path.join(__dirname, "data");
+const defaultDataDir = process.env.VERCEL
+  ? path.join(os.tmpdir(), "openbimstudio-data")
+  : path.join(__dirname, "data");
+const dataDir = process.env.OBS_DATA_DIR || defaultDataDir;
 const projectsFile = path.join(dataDir, "projects.json");
 const roomsFile = path.join(dataDir, "rooms.json");
 const uploadsDir = path.join(dataDir, "uploads");
@@ -251,38 +255,45 @@ function addChange(roomId, change) {
   return item;
 }
 
-setInterval(() => {
-  let changed = false;
-  const now = Date.now();
+if (!process.env.VERCEL) {
+  setInterval(() => {
+    let changed = false;
+    const now = Date.now();
 
-  for (const roomId of Object.keys(rooms)) {
-    const room = rooms[roomId];
+    for (const roomId of Object.keys(rooms)) {
+      const room = rooms[roomId];
 
-    if (!room || !room.clients) continue;
+      if (!room || !room.clients) continue;
 
-    for (const clientId of Object.keys(room.clients)) {
-      const c = room.clients[clientId];
+      for (const clientId of Object.keys(room.clients)) {
+        const c = room.clients[clientId];
 
-      if (!c || now - Number(c.updatedAt || 0) > PRESENCE_TIMEOUT_MS) {
-        delete room.clients[clientId];
-        changed = true;
+        if (!c || now - Number(c.updatedAt || 0) > PRESENCE_TIMEOUT_MS) {
+          delete room.clients[clientId];
+          changed = true;
+        }
+      }
+
+      if (changed) {
+        broadcast(roomId, "presence", presenceList(roomId));
       }
     }
 
     if (changed) {
-      broadcast(roomId, "presence", presenceList(roomId));
+      saveJson(roomsFile, rooms);
     }
-  }
+  }, 15000).unref();
+}
 
-  if (changed) {
-    saveJson(roomsFile, rooms);
-  }
-}, 15000);
-
-const server = http.createServer(async (req, res) => {
+async function requestHandler(req, res) {
   const origin = req.headers.origin;
-  const allowedOrigin = originAllowed(origin, ALLOWED_ORIGINS);
-  res.obsCors = corsHeaders(origin, ALLOWED_ORIGINS);
+  let reqAllowed = ALLOWED_ORIGINS;
+  if (process.env.VERCEL && !process.env.OBS_ALLOWED_ORIGINS && req.headers.host) {
+    const proto = String(req.headers["x-forwarded-proto"] || "https").split(",")[0].trim();
+    reqAllowed = new Set([...ALLOWED_ORIGINS, `${proto}://${req.headers.host}`]);
+  }
+  const allowedOrigin = originAllowed(origin, reqAllowed);
+  res.obsCors = corsHeaders(origin, reqAllowed);
 
   // Correlation id — every response carries it; every security log cites it.
   const reqId = correlationId(req);
@@ -524,7 +535,9 @@ const server = http.createServer(async (req, res) => {
     error:
       "Not found. Use /api/projects/:id or /api/rooms/:room or /api/rooms/:room/events or /api/rooms/:room/join or /api/convert",
   });
-});
+}
+
+const server = http.createServer(requestHandler);
 
 /* ═════════════════════════════════════════════════════════════════════════
    RVT / NWD / NWC → IFC conversion endpoint
@@ -803,31 +816,36 @@ async function handleConvert(req, res, url, reqId) {
 }
 
 /* Retention sweep (Phase 1.3): expired uploads + stale conversion jobs. */
-setInterval(() => {
-  const removed = sweepExpired(uploadsDir, UPLOAD_RETENTION_MS);
-  if (removed.length) {
-    securityLog(console.log, "upload_retention_sweep", { removed: removed.length });
-  }
-  const now = Date.now();
-  for (const [urn, job] of conversionJobs) {
-    if (now - Number(job.startedAt || 0) > UPLOAD_RETENTION_MS) {
-      conversionJobs.delete(urn);
-      try { fs.rmSync(path.join(uploadsDir, job.uploadId), { force: true }); } catch { /* */ }
-      try { fs.rmSync(path.join(uploadsDir, `${job.uploadId}.json`), { force: true }); } catch { /* */ }
+if (!process.env.VERCEL) {
+  setInterval(() => {
+    const removed = sweepExpired(uploadsDir, UPLOAD_RETENTION_MS);
+    if (removed.length) {
+      securityLog(console.log, "upload_retention_sweep", { removed: removed.length });
     }
-  }
-}, 10 * 60_000).unref();
+    const now = Date.now();
+    for (const [urn, job] of conversionJobs) {
+      if (now - Number(job.startedAt || 0) > UPLOAD_RETENTION_MS) {
+        conversionJobs.delete(urn);
+        try { fs.rmSync(path.join(uploadsDir, job.uploadId), { force: true }); } catch { /* */ }
+        try { fs.rmSync(path.join(uploadsDir, `${job.uploadId}.json`), { force: true }); } catch { /* */ }
+      }
+    }
+  }, 10 * 60_000).unref();
 
-server.listen(PORT, HOST, () => {
-  console.log(
-    `[collab] Open BIM Studio server running on http://${HOST}:${PORT}` + (AUTH_TOKEN ? " (token required)" : ""),
-  );
-  if (process.env.PORT === "0" && server.address() && typeof server.address() === "object") {
-    // Ephemeral-port mode for integration tests.
-    console.log(`[collab] PORT=${server.address().port}`);
-  }
-  console.log(`[collab] Projects API:   /api/projects/:id`);
-  console.log(`[collab] Rooms API:      /api/rooms/:room`);
-  console.log(`[collab] Live SSE API:   /api/rooms/:room/events`);
-  console.log(`[collab] Convert API:    /api/convert (RVT/NWD → IFC)`);
-});
+  server.listen(PORT, HOST, () => {
+    console.log(
+      `[collab] Open BIM Studio server running on http://${HOST}:${PORT}` + (AUTH_TOKEN ? " (token required)" : ""),
+    );
+    if (process.env.PORT === "0" && server.address() && typeof server.address() === "object") {
+      // Ephemeral-port mode for integration tests.
+      console.log(`[collab] PORT=${server.address().port}`);
+    }
+    console.log(`[collab] Projects API:   /api/projects/:id`);
+    console.log(`[collab] Rooms API:      /api/rooms/:room`);
+    console.log(`[collab] Live SSE API:   /api/rooms/:room/events`);
+    console.log(`[collab] Convert API:    /api/convert (RVT/NWD → IFC)`);
+  });
+}
+
+export { server, requestHandler };
+export default requestHandler;

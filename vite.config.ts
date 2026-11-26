@@ -60,6 +60,11 @@ export default defineConfig({
   server: {
     port: 3000,
     proxy: {
+      "/api": {
+        target: "http://localhost:4000",
+        changeOrigin: true,
+        secure: false,
+      },
       "/ollama": {
         target: "http://localhost:11434",
         changeOrigin: true,
@@ -83,6 +88,11 @@ export default defineConfig({
   preview: {
     port: 3000,
     proxy: {
+      "/api": {
+        target: "http://localhost:4000",
+        changeOrigin: true,
+        secure: false,
+      },
       "/ollama": {
         target: "http://localhost:11434",
         changeOrigin: true,

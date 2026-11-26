@@ -1,4 +1,5 @@
-const API_BASE = "http://localhost:4000/api";
+const envApiBase = String((import.meta as any).env?.VITE_API_BASE_URL || "").replace(/\/$/, "");
+const API_BASE = envApiBase ? `${envApiBase}/api` : "/api";
 
 export interface WorkshareProject {
   id: string;

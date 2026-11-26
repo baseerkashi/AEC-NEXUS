@@ -1,6 +1,7 @@
+const envApiBase = String((import.meta as any).env?.VITE_API_BASE_URL || "").replace(/\/$/, "");
 const API_BASE = String(
   (globalThis as any).__OPENBIM_COLLAB_API__ ||
-    "http://localhost:4000/api",
+    (envApiBase ? `${envApiBase}/api` : "/api"),
 );
 
 /* Optional auth for network deployments (remediation Phase 1.2).
